@@ -31,6 +31,9 @@ type GiftInteraction struct {
 	mu     sync.Mutex
 	events []GiftEvent // 最近礼物，供 OBS 等轮询
 	seq    uint64      // 单调递增序号，供前端检测新礼物
+
+	subsMu sync.Mutex
+	subs   map[chan GiftEvent]struct{}
 }
 
 func LoadGiftConfig(path string) (GiftConfig, error) {
@@ -79,6 +82,8 @@ func (g *GiftInteraction) Handle(ev GiftEvent) {
 		g.events = g.events[len(g.events)-50:]
 	}
 	g.mu.Unlock()
+
+	g.broadcast(ev)
 
 	action := g.actionFor(ev.GiftName)
 	say := g.render(action.Say, ev)
@@ -145,13 +150,87 @@ func (g *GiftInteraction) RecentEvents() []GiftEvent {
 	return out
 }
 
-// StartOverlayServer 启动 HTTP 服务：/ 礼物面板，/api/gifts JSON 数据
+func (g *GiftInteraction) snapshot() (uint64, []GiftEvent) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]GiftEvent, len(g.events))
+	copy(out, g.events)
+	return g.seq, out
+}
+
+func (g *GiftInteraction) subscribe() chan GiftEvent {
+	ch := make(chan GiftEvent, 16)
+	g.subsMu.Lock()
+	if g.subs == nil {
+		g.subs = make(map[chan GiftEvent]struct{})
+	}
+	g.subs[ch] = struct{}{}
+	g.subsMu.Unlock()
+	return ch
+}
+
+func (g *GiftInteraction) unsubscribe(ch chan GiftEvent) {
+	g.subsMu.Lock()
+	delete(g.subs, ch)
+	g.subsMu.Unlock()
+	close(ch)
+}
+
+func (g *GiftInteraction) broadcast(ev GiftEvent) {
+	g.subsMu.Lock()
+	defer g.subsMu.Unlock()
+	for ch := range g.subs {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+// StartOverlayServer 启动 HTTP 服务：/ 礼物面板，/api/gifts JSON，/api/gifts/stream SSE
 func (g *GiftInteraction) StartOverlayServer(addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/gifts", func(w http.ResponseWriter, r *http.Request) {
+		seq, events := g.snapshot()
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		_ = json.NewEncoder(w).Encode(g.RecentEvents())
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"seq":    seq,
+			"events": events,
+		})
+	})
+	mux.HandleFunc("/api/gifts/stream", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		ch := g.subscribe()
+		defer g.unsubscribe(ch)
+
+		_, _ = fmt.Fprintf(w, ": ok\n\n")
+		flusher.Flush()
+
+		ctx := r.Context()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				data, _ := json.Marshal(ev)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -163,10 +242,11 @@ func (g *GiftInteraction) StartOverlayServer(addr string) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(overlayHTML))
 	})
 	go func() {
-		log.Printf("[overlay] 礼物面板: http://%s/  |  API: http://%s/api/gifts", addr, addr)
+		log.Printf("[overlay] 礼物面板: http://%s/  |  API: http://%s/api/gifts  |  SSE: /api/gifts/stream", addr, addr)
 		if err := http.ListenAndServe(addr, mux); err != nil {
 			log.Printf("[overlay] HTTP 服务异常: %v", err)
 		}
@@ -184,7 +264,8 @@ const overlayHTML = `<!DOCTYPE html>
   h1 { font-size: 22px; margin-bottom: 12px; color: #ffd700; }
   #status { color: #888; font-size: 13px; margin-bottom: 16px; }
   .gift { background: linear-gradient(135deg,#1a1a2e,#16213e); border-left: 4px solid #ffd700;
-    padding: 12px 16px; margin-bottom: 10px; border-radius: 8px; animation: fadeIn .4s ease; }
+    padding: 12px 16px; margin-bottom: 10px; border-radius: 8px; }
+  .gift.new { animation: fadeIn .4s ease; }
   .gift .user { color: #7ec8ff; font-weight: bold; }
   .gift .name { color: #ffd700; font-size: 18px; }
   .gift .meta { color: #aaa; font-size: 12px; margin-top: 4px; }
@@ -196,33 +277,57 @@ const overlayHTML = `<!DOCTYPE html>
 <div id="status">连接中...</div>
 <div id="list"></div>
 <script>
-let lastSeq = 0;
-function renderGifts(data) {
-  const list = document.getElementById('list');
-  list.innerHTML = data.slice().reverse().map(g =>
-    '<div class="gift"><span class="user">' + esc(g.UserName||'匿名') + '</span> 送出 ' +
-    '<span class="name">' + esc(g.GiftName||'?') + '</span> x' + (g.Count||1) +
-    '<div class="meta">钻石: ' + (g.TotalDiamond||0) + '</div></div>'
-  ).join('');
-}
-async function poll() {
-  try {
-    const res = await fetch('/api/gifts');
-    const data = await res.json();
-    const latestSeq = data.reduce((max, g) => Math.max(max, g.seq || 0), 0);
-    document.getElementById('status').textContent =
-      '已连接 | 显示最近 ' + data.length + ' 条 | 累计 ' + latestSeq + ' 条礼物';
-    if (latestSeq !== lastSeq) {
-      lastSeq = latestSeq;
-      renderGifts(data);
-    }
-  } catch(e) {
-    document.getElementById('status').textContent = '连接失败，请确认程序在运行';
-  }
-  setTimeout(poll, 1000);
-}
+const MAX_DISPLAY = 50;
+let total = 0;
+
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-poll();
+
+function giftHTML(g, animate) {
+  const cls = animate ? 'gift new' : 'gift';
+  return '<div class="' + cls + '"><span class="user">' + esc(g.UserName||'匿名') + '</span> 送出 ' +
+    '<span class="name">' + esc(g.GiftName||'?') + '</span> x' + (g.Count||1) +
+    '<div class="meta">钻石: ' + (g.TotalDiamond||0) + '</div></div>';
+}
+
+function updateStatus() {
+  const n = document.getElementById('list').children.length;
+  document.getElementById('status').textContent =
+    '实时连接 | 显示最近 ' + n + ' 条 | 累计 ' + total + ' 条礼物';
+}
+
+function prependGift(g) {
+  const list = document.getElementById('list');
+  list.insertAdjacentHTML('afterbegin', giftHTML(g, true));
+  while (list.children.length > MAX_DISPLAY) {
+    list.removeChild(list.lastChild);
+  }
+  total = g.seq || total;
+  updateStatus();
+}
+
+async function init() {
+  try {
+    const res = await fetch('/api/gifts', { cache: 'no-store' });
+    const body = await res.json();
+    const data = body.events || [];
+    total = body.seq || 0;
+    const list = document.getElementById('list');
+    list.innerHTML = data.slice().reverse().map(g => giftHTML(g, false)).join('');
+    updateStatus();
+  } catch (e) {
+    document.getElementById('status').textContent = '加载历史失败，等待实时推送...';
+  }
+
+  const es = new EventSource('/api/gifts/stream');
+  es.onmessage = (e) => {
+    try { prependGift(JSON.parse(e.data)); } catch (_) {}
+  };
+  es.onopen = () => updateStatus();
+  es.onerror = () => {
+    document.getElementById('status').textContent = '连接断开，正在重连... | 累计 ' + total + ' 条礼物';
+  };
+}
+init();
 </script>
 </body>
 </html>`
