@@ -2,7 +2,7 @@
 $env:GOPROXY = "https://goproxy.cn,direct"
 $env:Path = "C:\Program Files\Go\bin;" + $env:Path
 
-$room = "https://live.douyin.com/732174177525"
+$room = "https://live.douyin.com/274468358024"
 if ($args.Count -gt 0 -and $args[0]) {
     $room = $args[0]
 } elseif ($env:DOUYIN_ROOM_URL) {

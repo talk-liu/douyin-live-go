@@ -15,6 +15,21 @@ type GiftEvent struct {
 	RepeatEnd    bool   `json:"RepeatEnd"`
 }
 
+// GameAction 前端/游戏侧要执行的动作
+type GameAction struct {
+	Type         string         `json:"type"`
+	Params       map[string]any `json:"params,omitempty"`
+	ScaleByCount bool           `json:"scale_by_count,omitempty"` // 为 true 时 params.amount *= Count
+}
+
+// GiftPayload 推送给前端的完整礼物事件（含已解析动作）
+type GiftPayload struct {
+	GiftEvent
+	Say       string      `json:"say,omitempty"`
+	Action    *GameAction `json:"action,omitempty"`
+	Triggered bool        `json:"triggered"` // true 时前端应执行 action
+}
+
 func giftEventFromDouyin(msg *new_douyin.Webcast_Im_GiftMessage) GiftEvent {
 	ev := GiftEvent{
 		GiftID:    msg.GetGiftId(),
