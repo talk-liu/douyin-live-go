@@ -202,7 +202,11 @@ func loadCookie(path string, flagCookie string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	text := string(data)
+	if strings.Contains(text, "# Netscape HTTP Cookie File") || strings.Contains(text, "\tTRUE\t") {
+		return parseNetscapeCookies(text)
+	}
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -212,4 +216,30 @@ func loadCookie(path string, flagCookie string) string {
 		}
 	}
 	return ""
+}
+
+func parseNetscapeCookies(text string) string {
+	cookies := make(map[string]string)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+		name, value := fields[5], fields[6]
+		if name != "" {
+			cookies[name] = value
+		}
+	}
+	if len(cookies) == 0 {
+		return ""
+	}
+	pairs := make([]string, 0, len(cookies))
+	for name, value := range cookies {
+		pairs = append(pairs, name+"="+value)
+	}
+	return strings.Join(pairs, "; ")
 }

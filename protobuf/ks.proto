@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package kuaishouPubf;
+
+option go_package = "github.com/XiaoMiku01/douyin-live-go/protobuf/kspb";
+
+message CSWebEnterRoom {
+  int64 payloadType = 1;
+  message Payload {
+    string token = 1;
+    string liveStreamId = 2;
+    uint32 reconnectCount = 3;
+    uint32 lastErrorCode = 4;
+    string expTag = 5;
+    string attach = 6;
+    string pageId = 7;
+  }
+  Payload payload = 3;
+}
+
+message SCWebEnterRoomAck {
+  uint64 minReconnectMs = 1;
+  uint64 maxReconnectMs = 2;
+  uint64 heartbeatIntervalMs = 3;
+}
+
+message SimpleUserInfo {
+  string principalId = 1;
+  string userName = 2;
+  string headUrl = 3;
+}
+
+message WebWatchingUserInfo {
+  SimpleUserInfo user = 1;
+  bool offline = 2;
+  bool tuhao = 3;
+  WebLiveAssistantType liveAssistantType = 4;
+  string displayKsCoin = 5;
+}
+
+message SCWebLiveWatchingUsers {
+  repeated WebWatchingUserInfo watchingUser = 1;
+  string displayWatchingCount = 2;
+  uint64 pendingDuration = 3;
+}
+
+message CSWebHeartbeat {
+  int64 payloadType = 1;
+  message Payload {
+    uint64 timestamp = 1;
+  }
+  Payload payload = 3;
+}
+
+message SocketMessage {
+  PayloadType payloadType = 1;
+  CompressionType compressionType = 2;
+  bytes payload = 3;
+}
+
+message SCHeartbeatAck {
+  uint64 timestamp = 1;
+  uint64 clientTimestamp = 2;
+}
+
+message WebCommentFeed {
+  string id = 1;
+  SimpleUserInfo user = 2;
+  string content = 3;
+  string deviceHash = 4;
+  uint64 sortRank = 5;
+  string color = 6;
+}
+
+message SCWebFeedPush {
+  string displayWatchingCount = 1;
+  string displayLikeCount = 2;
+  uint64 pendingLikeCount = 3;
+  uint64 pushInterval = 4;
+  repeated WebCommentFeed commentFeeds = 5;
+  string commentCursor = 6;
+  repeated WebLikeFeed likeFeeds = 8;
+  repeated WebGiftFeed giftFeeds = 9;
+  string giftCursor = 10;
+}
+
+message WebGiftFeed {
+  string id = 1;
+  SimpleUserInfo user = 2;
+  uint64 time = 3;
+  uint32 giftId = 4;
+  uint64 sortRank = 5;
+  string mergeKey = 6;
+  uint32 batchSize = 7;
+  uint32 comboCount = 8;
+  uint32 rank = 9;
+}
+
+message WebLikeFeed {
+  string id = 1;
+  SimpleUserInfo user = 2;
+  uint64 sortRank = 3;
+  string deviceHash = 4;
+}
+
+enum CompressionType {
+  COMPRESSION_TYPE_UNKNOWN = 0;
+  NONE = 1;
+  GZIP = 2;
+  AES = 3;
+}
+
+enum PayloadType {
+  PAYLOAD_TYPE_UNKNOWN = 0;
+  CS_HEARTBEAT = 1;
+  SC_HEARTBEAT_ACK = 101;
+  CS_ENTER_ROOM = 200;
+  SC_ENTER_ROOM_ACK = 300;
+  SC_AUTHOR_PUSH_TRAFFIC_ZERO = 303;
+  SC_FEED_PUSH = 310;
+  SC_LIVE_WATCHING_LIST = 340;
+}
+
+enum WebLiveAssistantType {
+  WEB_LIVE_ASSISTANT_TYPE_UNKNOWN_ASSISTANT_TYPE = 0;
+  SUPER = 1;
+  JUNIOR = 2;
+}

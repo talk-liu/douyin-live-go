@@ -29,13 +29,33 @@
         }
       }
     },
-    "大啤酒": {
+    "啤酒": {
       "say": "{user} 请全场干杯！",
       "game": {
         "type": "buff",
         "params": {
           "buff": "attack_up",
           "duration": 10
+        }
+      }
+    },
+    "玫瑰花": {
+      "say": "{user} 送来玫瑰！",
+      "game": {
+        "type": "heal",
+        "params": {
+          "hp": 50
+        }
+      }
+    },
+    "棒棒糖": {
+      "say": "谢谢 {user} 的棒棒糖~",
+      "game": {
+        "type": "spawn",
+        "scale_by_count": true,
+        "params": {
+          "entity": "slime",
+          "amount": 1
         }
       }
     },

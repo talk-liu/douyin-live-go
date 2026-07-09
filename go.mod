@@ -3,6 +3,7 @@ module github.com/XiaoMiku01/douyin-live-go
 go 1.25.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/jwwsjlm/douyinLive/v2 v2.0.15
 	google.golang.org/protobuf v1.36.11
 )
@@ -20,7 +21,6 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
 	github.com/imroc/req/v3 v3.57.0 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect
