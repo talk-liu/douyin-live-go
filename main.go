@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"net/url"
@@ -9,10 +10,14 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	douyinlive "github.com/jwwsjlm/douyinLive/v2"
 )
+
+var errNotLive = errors.New("直播间未开播")
 
 func extractLiveID(room string) string {
 	room = strings.TrimSpace(room)
@@ -53,8 +58,13 @@ func main() {
 	}
 
 	interaction := NewGiftInteraction(cfg)
-	if *overlayAddr != "" {
+	frontendOnly := *overlayAddr != ""
+	if frontendOnly {
 		interaction.StartOverlayServer(*overlayAddr)
+		log.Println("前端服务已启动（未开播也可访问页面）")
+		log.Println("视频资源目录: assets/videos/  （放入 mp4/webm 后访问 /video）")
+		log.Println("浏览器打开 http://" + *overlayAddr + "/video 可查看视频循环页")
+		log.Println("浏览器打开 http://" + *overlayAddr + "/gifts 可查看礼物面板")
 	}
 
 	liveID := extractLiveID(*roomURL)
@@ -67,38 +77,88 @@ func main() {
 		log.Println("提示: 未配置 Cookie，可能收不到礼物。请登录 live.douyin.com 后复制 Cookie 到 config/cookie.txt")
 	}
 
-	dl, err := douyinlive.NewDouyinLive(liveID, log.Default(), cookieStr)
-	if err != nil {
-		log.Fatalf("创建实例失败: %v", err)
+	var (
+		dlMu sync.Mutex
+		dl   *douyinlive.DouyinLive
+	)
+
+	startLive := func() error {
+		dlMu.Lock()
+		defer dlMu.Unlock()
+
+		if dl != nil {
+			return nil
+		}
+
+		instance, err := douyinlive.NewDouyinLive(liveID, log.Default(), cookieStr)
+		if err != nil {
+			return err
+		}
+
+		isLive, err := instance.IsLive()
+		if err != nil {
+			instance.Close()
+			return err
+		}
+		if !isLive {
+			instance.Close()
+			return errNotLive
+		}
+
+		setupGiftHandlers(instance, interaction, *debug)
+		dl = instance
+
+		go func() {
+			log.Println("直播间已确认开播，礼物监听已启动")
+			if *debug {
+				log.Println("调试模式：前 200 条消息会打印类型")
+			}
+			log.Println("终端和 gifts.log 会记录礼物")
+
+			if err := instance.Start(); err != nil {
+				log.Printf("直播连接结束: %v", err)
+			}
+
+			dlMu.Lock()
+			if dl == instance {
+				dl = nil
+			}
+			dlMu.Unlock()
+			log.Println("礼物监听已断开，将尝试重新连接...")
+		}()
+
+		return nil
 	}
 
-	isLive, err := dl.IsLive()
-	if err != nil {
-		log.Fatalf("检查直播状态失败: %v", err)
+	if err := startLive(); err != nil {
+		if errors.Is(err, errNotLive) {
+			if frontendOnly {
+				log.Println("直播间当前未开播，前端页面仍可访问；开播后将自动连接礼物监听")
+			} else {
+				log.Fatal("直播间当前未开播，请开播后再运行")
+			}
+		} else {
+			log.Fatalf("连接直播间失败: %v", err)
+		}
 	}
-	if !isLive {
-		log.Fatal("直播间当前未开播，请开播后再运行")
-	}
-	log.Println("直播间已确认开播")
-
-	setupGiftHandlers(dl, interaction, *debug)
 
 	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-		log.Println("正在退出...")
-		dl.Close()
-		os.Exit(0)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := startLive(); err != nil && !errors.Is(err, errNotLive) {
+				log.Printf("重连直播间失败: %v", err)
+			}
+		}
 	}()
 
-	log.Println("礼物监听已启动，终端和 gifts.log 会记录礼物")
-	log.Println("浏览器打开 http://127.0.0.1:8080/ 可查看礼物面板")
-	if *debug {
-		log.Println("调试模式：前 200 条消息会打印类型")
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	log.Println("正在退出...")
+	dlMu.Lock()
+	if dl != nil {
+		dl.Close()
 	}
-
-	if err := dl.Start(); err != nil {
-		log.Fatalf("连接结束: %v", err)
-	}
+	dlMu.Unlock()
 }

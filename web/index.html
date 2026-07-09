@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>抖音直播互动</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>抖音直播互动</h1>
+      <p class="desc">前端页面由 Vite 构建，视频资源放在项目根目录 <code>assets/videos/</code></p>
+      <nav class="links">
+        <a class="card" href="/video?dir=boy">
+          <strong>男生视频循环</strong>
+          <span>循环播放 assets/videos/boy/ 下的视频</span>
+        </a>
+        <a class="card" href="/video?dir=girl">
+          <strong>女生视频循环</strong>
+          <span>循环播放 assets/videos/girl/ 下的视频</span>
+        </a>
+        <a class="card" href="/video">
+          <strong>全部视频循环</strong>
+          <span>按目录顺序播放 boy / girl 下所有视频</span>
+        </a>
+        <a class="card" href="/gifts">
+          <strong>礼物监控面板</strong>
+          <span>实时 SSE 礼物列表（由 Go 服务提供）</span>
+        </a>
+      </nav>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

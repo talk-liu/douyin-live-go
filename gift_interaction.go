@@ -353,17 +353,12 @@ func (g *GiftInteraction) StartOverlayServer(addr string) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(overlayHTML))
-	})
+	mountVideoAssets(mux)
+	if !mountWebDist(mux, addr) {
+		mountLegacyOverlay(mux)
+	}
 	go func() {
-		log.Printf("[overlay] 礼物面板: http://%s/  |  API: /api/gifts  |  SSE: /api/gifts/stream  |  配置: /api/config/gifts", addr)
+		log.Printf("[overlay] API: http://%s/api/gifts  |  SSE: /api/gifts/stream  |  视频资源: /videos/  |  配置: /api/config/gifts", addr)
 		if err := http.ListenAndServe(addr, mux); err != nil {
 			log.Printf("[overlay] HTTP 服务异常: %v", err)
 		}

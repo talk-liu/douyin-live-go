@@ -11,5 +11,14 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Frontend
+web/node_modules/
+web/dist/
+
+# Runtime logs
+gifts.log
+build.log
+
+# Large video assets (put your files here locally)
+assets/videos/*
+!assets/videos/.gitkeep

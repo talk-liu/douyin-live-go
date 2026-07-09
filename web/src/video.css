@@ -1,0 +1,48 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+#player {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: #ddd;
+  font-family: "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1.6;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: none;
+}
+
+.hint code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #7ec8ff;
+}
+
+.hidden {
+  display: none;
+}
