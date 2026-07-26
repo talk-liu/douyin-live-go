@@ -43,6 +43,8 @@ func main() {
 	debug := flag.Bool("debug", false, "打印所有消息类型（排查用）")
 	cookie := flag.String("cookie", "", "平台 Cookie（登录网页版后从浏览器复制）")
 	cookieFile := flag.String("cookie-file", "", "Cookie 文件路径（快手默认 config/kuaishou-cookie.txt）")
+	browserAuth := flag.Bool("browser-auth", true, "快手使用 Chrome 拦截浏览器鉴权（更稳，需本机安装 Chrome）")
+	browserHeadless := flag.Bool("browser-headless", true, "浏览器鉴权时使用无头模式")
 	flag.Parse()
 
 	platform := normalizePlatform(*platformFlag)
@@ -90,7 +92,7 @@ func main() {
 
 	switch platform {
 	case "kuaishou":
-		runKuaishou(ctx, cancel, *roomURL, cookieStr, interaction, frontendOnly, *debug)
+		runKuaishou(ctx, cancel, *roomURL, cookieStr, *cookieFile, interaction, frontendOnly, *debug, *browserAuth, *browserHeadless)
 	default:
 		runDouyin(*roomURL, cookieStr, interaction, frontendOnly, *debug)
 	}
@@ -184,13 +186,37 @@ func runDouyin(roomURL, cookieStr string, interaction *GiftInteraction, frontend
 	})
 }
 
-func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookieStr string, interaction *GiftInteraction, frontendOnly, debug bool) {
+func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookieStr, cookieFile string, interaction *GiftInteraction, frontendOnly, debug, browserAuth, browserHeadless bool) {
 	log.Printf("正在连接快手直播间 (principalId=%s)", kuaishou.ExtractPrincipalID(roomURL))
+	if browserAuth {
+		if browserHeadless {
+			log.Println("快手鉴权模式: Chrome 无头浏览器拦截（默认）")
+		} else {
+			log.Println("快手鉴权模式: Chrome 有界面浏览器拦截")
+		}
+	} else {
+		log.Println("快手鉴权模式: 纯 HTTP（可能更容易被限流）")
+	}
 
 	var (
-		clientMu sync.Mutex
-		client   *kuaishou.Client
+		clientMu       sync.Mutex
+		client         *kuaishou.Client
+		retryInterval  = 30 * time.Second
+		retryMu        sync.Mutex
 	)
+
+	scheduleRetry := func(reason error) {
+		retryMu.Lock()
+		defer retryMu.Unlock()
+		if kuaishou.IsRateLimitErr(reason) {
+			if retryInterval < 5*time.Minute {
+				retryInterval *= 2
+			}
+			log.Printf("快手接口限流，下次重连间隔 %v（%v）", retryInterval, reason)
+			return
+		}
+		retryInterval = 30 * time.Second
+	}
 
 	startLive := func() error {
 		clientMu.Lock()
@@ -200,11 +226,16 @@ func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookie
 			return nil
 		}
 
-		instance := kuaishou.NewClient(roomURL, cookieStr, log.Default())
+		instance := kuaishou.NewClient(roomURL, cookieStr, log.Default(), kuaishou.ClientOptions{
+			BrowserAuth:     browserAuth,
+			BrowserHeadless: browserHeadless,
+			CookieFile:      cookieFile,
+		})
 		setupKuaishouGiftHandlers(instance, interaction, debug)
 
 		isLive, err := instance.IsLive()
 		if err != nil {
+			scheduleRetry(err)
 			return err
 		}
 		if !isLive {
@@ -221,6 +252,11 @@ func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookie
 
 			if err := instance.Start(ctx); err != nil && ctx.Err() == nil {
 				log.Printf("直播连接结束: %v", err)
+				scheduleRetry(err)
+			} else {
+				retryMu.Lock()
+				retryInterval = 30 * time.Second
+				retryMu.Unlock()
 			}
 
 			clientMu.Lock()
@@ -242,10 +278,10 @@ func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookie
 				log.Fatal("直播间当前未开播，请开播后再运行")
 			}
 		} else if frontendOnly {
-			if strings.Contains(err.Error(), "限流") {
-				log.Printf("快手接口限流: %v（将每 30 秒重试，也可更新 Cookie 后重启）", err)
+			if kuaishou.IsRateLimitErr(err) {
+				log.Printf("快手接口限流: %v（将自动退避重试，请勿频繁重启进程）", err)
 			} else {
-				log.Printf("连接直播间失败: %v（将每 30 秒重试）", err)
+				log.Printf("连接直播间失败: %v（将自动重试）", err)
 			}
 		} else {
 			log.Fatalf("连接直播间失败: %v", err)
@@ -253,15 +289,20 @@ func runKuaishou(ctx context.Context, cancel context.CancelFunc, roomURL, cookie
 	}
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		nextWait := retryInterval
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-time.After(nextWait):
+				retryMu.Lock()
+				nextWait = retryInterval
+				retryMu.Unlock()
+
 				if err := startLive(); err != nil && !errors.Is(err, errNotLive) {
-					log.Printf("重连直播间失败: %v", err)
+					if !kuaishou.IsRateLimitErr(err) {
+						log.Printf("重连直播间失败: %v", err)
+					}
 				}
 			}
 		}

@@ -35,15 +35,23 @@ type DebugMessage struct {
 	Size        int
 }
 
+type ClientOptions struct {
+	BrowserAuth     bool
+	BrowserHeadless bool
+	CookieFile      string
+}
+
 type Client struct {
 	liveURL string
 	cookie  string
 	logger  *log.Logger
 
-	room    *RoomInfo
-	gifts   map[uint32]string
-	onGift  func(Gift)
-	onDebug func(DebugMessage)
+	resolverOpts ResolverOptions
+	resolver     *RoomResolver
+	room     *RoomInfo
+	gifts    map[uint32]string
+	onGift   func(Gift)
+	onDebug  func(DebugMessage)
 
 	connMu          sync.Mutex
 	conn            *websocket.Conn
@@ -51,14 +59,20 @@ type Client struct {
 	heartbeatTicker time.Duration
 }
 
-func NewClient(liveURL, cookie string, logger *log.Logger) *Client {
+func NewClient(liveURL, cookie string, logger *log.Logger, opts ClientOptions) *Client {
 	if logger == nil {
 		logger = log.Default()
 	}
 	return &Client{
-		liveURL:         liveURL,
-		cookie:          cookie,
-		logger:          logger,
+		liveURL: liveURL,
+		cookie:  cookie,
+		logger:  logger,
+		resolverOpts: ResolverOptions{
+			BrowserAuth:     opts.BrowserAuth,
+			BrowserHeadless: opts.BrowserHeadless,
+			CookieFile:      opts.CookieFile,
+			Logger:          logger,
+		},
 		gifts:           make(map[uint32]string),
 		heartbeatTicker: defaultHeartbeatInterval,
 	}
@@ -72,9 +86,15 @@ func (c *Client) OnDebug(fn func(DebugMessage)) {
 	c.onDebug = fn
 }
 
+func (c *Client) getResolver() *RoomResolver {
+	if c.resolver == nil {
+		c.resolver = NewRoomResolverWithOptions(c.liveURL, c.cookie, c.resolverOpts)
+	}
+	return c.resolver
+}
+
 func (c *Client) IsLive() (bool, error) {
-	resolver := NewRoomResolver(c.liveURL, c.cookie)
-	room, err := resolver.Resolve()
+	room, err := c.getResolver().Resolve()
 	if err != nil {
 		return false, err
 	}
@@ -86,15 +106,14 @@ func (c *Client) loadGiftTable() {
 	if len(c.gifts) > 0 {
 		return
 	}
-	resolver := NewRoomResolver(c.liveURL, c.cookie)
-	if table, err := resolver.FetchGiftTable(); err == nil && len(table) > 0 {
+	if table, err := c.getResolver().FetchGiftTable(); err == nil && len(table) > 0 {
 		c.gifts = table
 		c.logger.Printf("[快手] 已加载礼物表 %d 个", len(table))
 	}
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	if c.room == nil || !c.room.IsLive || c.room.LiveStreamID == "" {
+	if c.room == nil || !c.room.IsLive || c.room.LiveStreamID == "" || c.room.Token == "" || c.room.WebSocketURL == "" {
 		isLive, err := c.IsLive()
 		if err != nil {
 			return err
@@ -105,13 +124,7 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	if c.room.Token == "" || c.room.WebSocketURL == "" {
-		resolver := NewRoomResolver(c.liveURL, c.cookie)
-		wsInfo, err := resolver.fetchWebSocketInfo(c.room.LiveStreamID)
-		if err != nil {
-			return fmt.Errorf("获取 WebSocket 鉴权失败: %w", err)
-		}
-		c.room.Token = wsInfo.Token
-		c.room.WebSocketURL = wsInfo.WebSocketURL
+		return fmt.Errorf("获取 WebSocket 鉴权失败: Resolve 未返回 token/websocket 地址")
 	}
 
 	c.loadGiftTable()

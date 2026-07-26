@@ -1,9 +1,11 @@
 package kuaishou
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -38,9 +40,26 @@ type RoomResolver struct {
 	cookie  string
 	liveURL string
 	headers http.Header
+
+	useBrowserAuth  bool
+	browserHeadless bool
+	cookieFile      string
+	logger          *log.Logger
+	browserOpts     BrowserAuthOptions
 }
 
 func NewRoomResolver(liveURL, cookie string) *RoomResolver {
+	return NewRoomResolverWithOptions(liveURL, cookie, ResolverOptions{})
+}
+
+type ResolverOptions struct {
+	BrowserAuth     bool
+	BrowserHeadless bool
+	CookieFile      string
+	Logger          *log.Logger
+}
+
+func NewRoomResolverWithOptions(liveURL, cookie string, opts ResolverOptions) *RoomResolver {
 	liveURL = normalizeLiveURL(liveURL)
 	headers := http.Header{}
 	headers.Set("User-Agent", defaultUserUA)
@@ -51,10 +70,14 @@ func NewRoomResolver(liveURL, cookie string) *RoomResolver {
 		headers.Set("Cookie", cookie)
 	}
 	return &RoomResolver{
-		client:  newHTTPClient(cookie),
-		cookie:  cookie,
-		liveURL: liveURL,
-		headers: headers,
+		client:          newHTTPClient(cookie),
+		cookie:          cookie,
+		liveURL:         liveURL,
+		headers:         headers,
+		useBrowserAuth:  opts.BrowserAuth,
+		browserHeadless: opts.BrowserHeadless,
+		cookieFile:      opts.CookieFile,
+		logger:          opts.Logger,
 	}
 }
 
@@ -83,8 +106,24 @@ func ExtractPrincipalID(room string) string {
 	return room
 }
 
-// Resolve 按 kwai2 流程：页面取 liveStreamId → websocketinfo 鉴权（不以 livedetail 为准）。
+// Resolve 默认通过 Chrome 拦截浏览器真实鉴权；失败时回退 HTTP。
 func (r *RoomResolver) Resolve() (*RoomInfo, error) {
+	if r.useBrowserAuth {
+		r.browserOpts = BrowserAuthOptions{
+			Headless:   r.browserHeadless,
+			CookieFile: r.cookieFile,
+			Logger:     r.logger,
+		}
+		if info, err := r.resolveViaBrowser(context.Background()); err == nil {
+			return info, nil
+		} else if r.logger != nil {
+			r.logger.Printf("[快手] 浏览器鉴权失败，回退 HTTP: %v", err)
+		}
+	}
+	return r.resolveViaHTTP()
+}
+
+func (r *RoomResolver) resolveViaHTTP() (*RoomInfo, error) {
 	principalID := ExtractPrincipalID(r.liveURL)
 	if principalID == "" {
 		return nil, fmt.Errorf("无法从地址解析快手主播 ID: %s", r.liveURL)
@@ -92,34 +131,32 @@ func (r *RoomResolver) Resolve() (*RoomInfo, error) {
 
 	info := &RoomInfo{PrincipalID: principalID}
 
-	liveStreamID, err := r.fetchLiveStreamIDFromPage(principalID)
+	detail, err := r.fetchLiveDetail(principalID)
 	if err != nil {
 		return nil, err
 	}
-
-	if liveStreamID == "" {
-		detail, derr := r.fetchLiveDetail(principalID)
-		if derr != nil {
-			return nil, derr
-		}
-		liveStreamID = detail.LiveStreamID
-		if detail.Token != "" {
-			info.Token = detail.Token
-		}
-		if len(detail.WebSocketURL) > 0 {
-			info.WebSocketURL = detail.WebSocketURL
-		}
+	if detail.LiveStreamID != "" {
+		info.LiveStreamID = detail.LiveStreamID
+		info.Token = detail.Token
+		info.WebSocketURL = detail.WebSocketURL
 	}
 
-	if liveStreamID == "" {
+	if info.LiveStreamID == "" {
+		liveStreamID, perr := r.fetchLiveStreamIDFromPage(principalID)
+		if perr != nil {
+			return nil, perr
+		}
+		info.LiveStreamID = liveStreamID
+	}
+
+	if info.LiveStreamID == "" {
 		return info, nil
 	}
-	info.LiveStreamID = liveStreamID
 
 	if info.Token == "" || info.WebSocketURL == "" {
-		wsInfo, wsErr := r.fetchWebSocketInfo(liveStreamID)
+		wsInfo, wsErr := r.fetchWebSocketInfo(info.LiveStreamID)
 		if wsErr != nil {
-			return nil, fmt.Errorf("liveStreamId=%s WebSocket 鉴权失败: %w", liveStreamID, wsErr)
+			return nil, fmt.Errorf("liveStreamId=%s WebSocket 鉴权失败: %w", info.LiveStreamID, wsErr)
 		}
 		info.Token = wsInfo.Token
 		info.WebSocketURL = wsInfo.WebSocketURL
@@ -151,34 +188,11 @@ func (r *RoomResolver) fetchLiveDetail(principalID string) (*liveDetailResult, e
 	}
 	defer resp.Body.Close()
 
-	var payload struct {
-		Data struct {
-			Result int `json:"result"`
-			LiveStream struct {
-				ID string `json:"id"`
-			} `json:"liveStream"`
-			Author struct {
-				Living bool `json:"living"`
-			} `json:"author"`
-			WebsocketInfo struct {
-				Token         string   `json:"token"`
-				WebsocketURLs []string `json:"websocketUrls"`
-			} `json:"websocketInfo"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-
-	out := &liveDetailResult{
-		AuthorLiving: payload.Data.Author.Living,
-		LiveStreamID: payload.Data.LiveStream.ID,
-		Token:        payload.Data.WebsocketInfo.Token,
-	}
-	if len(payload.Data.WebsocketInfo.WebsocketURLs) > 0 {
-		out.WebSocketURL = payload.Data.WebsocketInfo.WebsocketURLs[0]
-	}
-	return out, nil
+	return parseLiveDetailBody(body)
 }
 
 func (r *RoomResolver) fetchLiveStreamIDFromPage(principalID string) (string, error) {
@@ -273,23 +287,15 @@ func (r *RoomResolver) fetchWebSocketInfo(liveStreamID string) (*websocketInfo, 
 	}
 	defer resp.Body.Close()
 
-	var payload struct {
-		Data struct {
-			Result        int      `json:"result"`
-			Token         string   `json:"token"`
-			WebsocketURLs []string `json:"websocketUrls"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	if payload.Data.Result != 1 || payload.Data.Token == "" || len(payload.Data.WebsocketURLs) == 0 {
-		return nil, fmt.Errorf("websocketinfo result=%d", payload.Data.Result)
+	ws, err := parseWebSocketInfoBody(body)
+	if err != nil {
+		return nil, err
 	}
-	return &websocketInfo{
-		Token:        payload.Data.Token,
-		WebSocketURL: payload.Data.WebsocketURLs[0],
-	}, nil
+	return ws, nil
 }
 
 func (r *RoomResolver) FetchGiftTable() (map[uint32]string, error) {
