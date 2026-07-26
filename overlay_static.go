@@ -123,6 +123,9 @@ func mountWebDist(mux *http.ServeMux, addr string) bool {
 		case "/video", "/video/":
 			serveWebFile(w, r, filepath.Join(webDistDir, "video.html"))
 			return
+		case "/crocodile", "/crocodile/":
+			serveWebFile(w, r, filepath.Join(webDistDir, "crocodile.html"))
+			return
 		case "/":
 			serveWebFile(w, r, filepath.Join(webDistDir, "index.html"))
 			return
@@ -143,7 +146,7 @@ func mountWebDist(mux *http.ServeMux, addr string) bool {
 		http.NotFound(w, r)
 	})
 
-	log.Printf("[overlay] 前端: http://%s/  |  视频页: http://%s/video  |  礼物面板: http://%s/gifts", addr, addr, addr)
+	log.Printf("[overlay] 前端: http://%s/  |  视频页: http://%s/video  |  鳄鱼互动: http://%s/crocodile  |  礼物面板: http://%s/gifts", addr, addr, addr, addr)
 	return true
 }
 

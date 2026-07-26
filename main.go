@@ -104,6 +104,7 @@ func main() {
 		log.Println("前端服务已启动（未开播也可访问页面）")
 		log.Println("视频资源目录: assets/videos/  （放入 mp4/webm 后访问 /video）")
 		log.Println("浏览器打开 http://" + *overlayAddr + "/video 可查看视频循环页")
+		log.Println("浏览器打开 http://" + *overlayAddr + "/crocodile 可查看鳄鱼礼物互动页")
 		log.Println("浏览器打开 http://" + *overlayAddr + "/gifts 可查看礼物面板")
 	}
 

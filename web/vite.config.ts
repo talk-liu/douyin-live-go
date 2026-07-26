@@ -9,6 +9,9 @@ function devVideoRoute(): Plugin {
         if (req.url === '/video' || req.url === '/video/') {
           req.url = '/video.html'
         }
+        if (req.url === '/crocodile' || req.url === '/crocodile/') {
+          req.url = '/crocodile.html'
+        }
         next()
       })
     },
@@ -22,6 +25,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         video: resolve(__dirname, 'video.html'),
+        crocodile: resolve(__dirname, 'crocodile.html'),
       },
     },
   },

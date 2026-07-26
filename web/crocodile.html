@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>鳄鱼互动</title>
+    <link rel="stylesheet" href="/src/video.css" />
+  </head>
+  <body>
+    <div id="app">
+      <video id="player-a" class="player visible" playsinline muted autoplay></video>
+      <video id="player-b" class="player" playsinline muted autoplay></video>
+      <div id="hint" class="hint hidden"></div>
+      <div id="badge" class="badge hidden"></div>
+    </div>
+    <script type="module" src="/src/crocodile.ts"></script>
+  </body>
+</html>
