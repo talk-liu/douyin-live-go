@@ -16,7 +16,7 @@ func loadPlatformCookie(platform, cookieFile, flagCookie string) string {
 	if c := strings.TrimSpace(os.Getenv(envKey)); c != "" {
 		return c
 	}
-	c := loadCookie(cookieFile, "")
+	c := loadCookie(cookieFile, "", platform)
 	if c == "" {
 		return ""
 	}

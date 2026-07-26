@@ -188,7 +188,7 @@ func formatGiftLine(prefix string, ev GiftEvent) string {
 		prefix, ev.UserName, ev.GiftName, ev.Count, ev.TotalDiamond, ev.RepeatEnd)
 }
 
-func loadCookie(path string, flagCookie string) string {
+func loadCookie(path string, flagCookie, platform string) string {
 	if c := strings.TrimSpace(flagCookie); c != "" {
 		return c
 	}
@@ -204,7 +204,7 @@ func loadCookie(path string, flagCookie string) string {
 	}
 	text := string(data)
 	if strings.Contains(text, "# Netscape HTTP Cookie File") || strings.Contains(text, "\tTRUE\t") {
-		return parseNetscapeCookies(text)
+		return parseNetscapeCookies(text, netscapeDomainFilter(platform))
 	}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -218,7 +218,22 @@ func loadCookie(path string, flagCookie string) string {
 	return ""
 }
 
-func parseNetscapeCookies(text string) string {
+func netscapeDomainFilter(platform string) func(string) bool {
+	switch platform {
+	case "kuaishou", "ks":
+		return func(domain string) bool {
+			return strings.Contains(domain, "kuaishou.com")
+		}
+	default:
+		return func(domain string) bool {
+			return strings.Contains(domain, "douyin.com") ||
+				strings.Contains(domain, "snssdk.com") ||
+				strings.Contains(domain, "amemv.com")
+		}
+	}
+}
+
+func parseNetscapeCookies(text string, domainFilter func(string) bool) string {
 	cookies := make(map[string]string)
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -229,8 +244,12 @@ func parseNetscapeCookies(text string) string {
 		if len(fields) < 7 {
 			continue
 		}
-		name, value := fields[5], fields[6]
-		if name != "" {
+		if domainFilter != nil && !domainFilter(fields[0]) {
+			continue
+		}
+		name := fields[5]
+		value := strings.Join(fields[6:], "\t")
+		if name != "" && isValidCookieValue(value) {
 			cookies[name] = value
 		}
 	}
@@ -242,4 +261,8 @@ func parseNetscapeCookies(text string) string {
 		pairs = append(pairs, name+"="+value)
 	}
 	return strings.Join(pairs, "; ")
+}
+
+func isValidCookieValue(value string) bool {
+	return !strings.ContainsAny(value, "\"\n\r;")
 }

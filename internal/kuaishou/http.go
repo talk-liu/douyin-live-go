@@ -33,7 +33,7 @@ func injectCookies(jar *cookiejar.Jar, cookie string) {
 				continue
 			}
 			name, value, ok := strings.Cut(part, "=")
-			if !ok || name == "" {
+			if !ok || name == "" || strings.ContainsAny(value, "\"\n\r;") {
 				continue
 			}
 			cookies = append(cookies, &http.Cookie{Name: name, Value: value})

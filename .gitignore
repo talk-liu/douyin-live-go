@@ -19,6 +19,9 @@ web/dist/
 gifts.log
 build.log
 
+# Local auth cookies (never commit)
+config/cookie.txt
+
 # Large video assets (put your files here locally)
 assets/videos/*
 !assets/videos/.gitkeep
