@@ -14,8 +14,8 @@ if ($args.Count -gt 1) {
     $extraArgs = $args[1..($args.Length - 1)]
 }
 $runArgs = @("-room", $room) + $extraArgs
-if (Test-Path "gift-live.exe") {
-    & .\gift-live.exe @runArgs
+if (Test-Path "douyin-live-go.exe") {
+    & .\douyin-live-go.exe @runArgs
 } else {
     & go run . @runArgs
 }

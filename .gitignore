@@ -19,6 +19,10 @@ web/dist/
 gifts.log
 build.log
 
+# Browser profile for auto cookie fetch
+config/douyin-chrome-profile/
+config/cookie.txt
+
 # Large video assets (put your files here locally)
 assets/videos/*
 !assets/videos/.gitkeep

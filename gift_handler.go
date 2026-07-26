@@ -202,7 +202,15 @@ func loadCookie(path string, flagCookie string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	text := string(data)
+	if strings.Contains(text, "# Netscape HTTP Cookie File") || strings.Contains(text, "\tTRUE\t") {
+		return parseNetscapeCookies(text, func(domain string) bool {
+			return strings.Contains(domain, "douyin.com") ||
+				strings.Contains(domain, "snssdk.com") ||
+				strings.Contains(domain, "amemv.com")
+		})
+	}
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -212,4 +220,38 @@ func loadCookie(path string, flagCookie string) string {
 		}
 	}
 	return ""
+}
+
+func parseNetscapeCookies(text string, domainFilter func(string) bool) string {
+	cookies := make(map[string]string)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+		if domainFilter != nil && !domainFilter(fields[0]) {
+			continue
+		}
+		name := fields[5]
+		value := strings.Join(fields[6:], "\t")
+		if name != "" && isValidCookieValue(value) {
+			cookies[name] = value
+		}
+	}
+	if len(cookies) == 0 {
+		return ""
+	}
+	pairs := make([]string, 0, len(cookies))
+	for name, value := range cookies {
+		pairs = append(pairs, name+"="+value)
+	}
+	return strings.Join(pairs, "; ")
+}
+
+func isValidCookieValue(value string) bool {
+	return !strings.ContainsAny(value, "\"\n\r;")
 }

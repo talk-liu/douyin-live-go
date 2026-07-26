@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	douyinauth "github.com/XiaoMiku01/douyin-live-go/internal/douyin"
 	douyinlive "github.com/jwwsjlm/douyinLive/v2"
 )
 
@@ -32,14 +34,52 @@ func extractLiveID(room string) string {
 	return room
 }
 
+func resolveDouyinCookie(roomURL, cookieFile, flagCookie string, browserAuth, browserHeadless bool) string {
+	cookieStr := loadCookie(cookieFile, flagCookie)
+	if !browserAuth {
+		if cookieStr != "" {
+			log.Println("已加载 Cookie（登录态），礼物消息成功率更高")
+		} else {
+			log.Println("提示: 未配置 Cookie，可能收不到礼物。请登录 live.douyin.com 后复制 Cookie 到 config/cookie.txt")
+		}
+		return cookieStr
+	}
+
+	if browserHeadless {
+		log.Println("抖音鉴权模式: Chrome 无头浏览器自动获取 Cookie（默认）")
+	} else {
+		log.Println("抖音鉴权模式: Chrome 有界面浏览器（可手动登录后自动保存 Cookie）")
+	}
+
+	fetched, err := douyinauth.FetchCookie(context.Background(), roomURL, cookieStr, douyinauth.BrowserAuthOptions{
+		Headless:   browserHeadless,
+		CookieFile: cookieFile,
+		ProfileDir: "config/douyin-chrome-profile",
+		Logger:     log.Default(),
+	})
+	if err != nil {
+		if cookieStr != "" {
+			log.Printf("[抖音][browser] 自动获取 Cookie 失败，继续使用已有 Cookie: %v", err)
+			return cookieStr
+		}
+		log.Printf("[抖音][browser] 自动获取 Cookie 失败: %v", err)
+		return ""
+	}
+
+	log.Println("已通过浏览器获取/刷新 Cookie")
+	return fetched
+}
+
 func main() {
 	roomURL := flag.String("room", "", "抖音直播间地址")
 	configPath := flag.String("config", "config/gifts.json", "礼物互动配置")
 	overlayAddr := flag.String("overlay", "127.0.0.1:8080", "网页/OBS 服务地址，留空关闭")
 	giftLogPath := flag.String("log", "gifts.log", "礼物日志文件，留空不写文件")
 	debug := flag.Bool("debug", false, "打印所有消息类型（排查用）")
-	cookie := flag.String("cookie", "", "抖音 Cookie（登录 live.douyin.com 后从浏览器复制）")
+	cookie := flag.String("cookie", "", "抖音 Cookie（可选，默认由浏览器自动获取）")
 	cookieFile := flag.String("cookie-file", "config/cookie.txt", "Cookie 文件路径")
+	browserAuth := flag.Bool("browser-auth", true, "使用 Chrome 浏览器自动获取 Cookie（需本机安装 Chrome）")
+	browserHeadless := flag.Bool("browser-headless", true, "浏览器获取 Cookie 时使用无头模式")
 	flag.Parse()
 
 	if *roomURL == "" {
@@ -70,12 +110,7 @@ func main() {
 	liveID := extractLiveID(*roomURL)
 	log.Printf("正在连接直播间: %s (liveID=%s)", *roomURL, liveID)
 
-	cookieStr := loadCookie(*cookieFile, *cookie)
-	if cookieStr != "" {
-		log.Println("已加载 Cookie（登录态），礼物消息成功率更高")
-	} else {
-		log.Println("提示: 未配置 Cookie，可能收不到礼物。请登录 live.douyin.com 后复制 Cookie 到 config/cookie.txt")
-	}
+	cookieStr := resolveDouyinCookie(*roomURL, *cookieFile, *cookie, *browserAuth, *browserHeadless)
 
 	var (
 		dlMu sync.Mutex
